@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "Dotti Sender FULL",
+  "version": "2.0.2",
+  "description": "Disparo automatico de prompts com elementos para Veo 3 — Versao completa com geracao em 2o plano, auto-download e reenvio automatico.",
+  "author": "DottiFlow",
+
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "alarms",
+    "downloads",
+    "tabs",
+    "system.display",
+    "contentSettings",
+    "webRequest"
+  ],
+
+  "host_permissions": [
+    "https://labs.google/*",
+    "https://*.googleapis.com/*",
+    "https://*.googleusercontent.com/*",
+    "https://dottiflow.com.br/*"
+  ],
+
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://labs.google/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": ["panel.html", "panel.js", "panel.css", "icons/*"],
+      "matches": ["https://labs.google/*"]
+    }
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  },
+
+  "minimum_chrome_version": "102"
+}

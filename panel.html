@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dotti Sender FULL</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div class="content">
+    <!-- Loading -->
+    <div id="loadingView" class="license-section">
+      <div class="spinner"></div>
+      <p class="loading-text">Verificando licenca...</p>
+    </div>
+
+    <!-- License Activation -->
+    <div id="licenseView" class="license-section hidden">
+      <div class="license-icon">&#128273;</div>
+      <h2 class="license-title">Ativar Licenca FULL</h2>
+      <p class="license-description">Insira sua chave de licenca para usar o Dotti Sender FULL.</p>
+
+      <input type="text" id="licenseInput" class="license-input"
+        placeholder="XXXXX-XXXXX-XXXXX-XXXXX" maxlength="23" autocomplete="off" />
+
+      <div id="licenseError" class="license-error hidden"></div>
+
+      <button id="activateBtn" class="btn btn-primary">Ativar Licenca</button>
+
+      <p class="license-help">
+        Nao tem uma licenca? <a href="https://dottiflow.com.br/precos" target="_blank">Assinar agora</a>
+      </p>
+    </div>
+
+    <!-- Main App -->
+    <div id="appView" class="hidden">
+      <div id="statusBar" class="status-bar">
+        <span id="statusText">Cole seus prompts e clique em PROCESSAR</span>
+      </div>
+
+      <!-- Tab Bar -->
+      <div class="tab-bar" id="tabBar">
+        <button class="tab-btn active" data-tab="video" id="tabBtnVideo">&#9654; Video</button>
+        <button class="tab-btn" data-tab="image" id="tabBtnImage">&#128247; Imagem</button>
+      </div>
+
+      <!-- Configuracoes compartilhadas -->
+      <div class="card" id="sharedSettingsCard">
+        <div class="card-title">Configuracoes</div>
+        <div class="setting-row">
+          <label>Prompts por lote:</label>
+          <input type="number" id="batchSize" value="20" min="1" max="50">
+        </div>
+        <div class="setting-row">
+          <label>Intervalo entre lotes (seg):</label>
+          <input type="number" id="batchInterval" value="90" min="30" max="600" step="10">
+        </div>
+        <div class="setting-row">
+          <label>Delay entre prompts (seg):</label>
+          <input type="number" id="promptDelay" value="3" min="3" max="20">
+        </div>
+        <div class="setting-row">
+          <label>Auto-download:</label>
+          <label class="toggle">
+            <input type="checkbox" id="autoDownload" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <label>Segundo plano:</label>
+          <label class="toggle">
+            <input type="checkbox" id="backgroundMode" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- ==================== ABA VIDEO ==================== -->
+      <div class="tab-content active" id="tabContentVideo">
+        <div class="tab-blocked hidden" id="videoBlockedOverlay">
+          Imagem em processamento. Aguarde para enviar videos.
+        </div>
+        <div class="card" id="videoSettingsCard">
+          <div class="card-title">Video</div>
+          <div class="setting-row">
+            <label>Pasta:</label>
+            <input type="text" id="videoFolder" value="DottiVideos" class="folder-input">
+          </div>
+        </div>
+
+        <div class="card" id="videoInputSection">
+          <div class="card-title">Prompts de video</div>
+          <textarea id="videoPromptsInput" placeholder="PROMPT 1 [1]: Descricao do primeiro video com elemento 1...
+
+PROMPT 2 [1, 2]: Descricao com elementos 1 e 2...
+
+PROMPT 3: Descricao sem elementos (so texto)..."></textarea>
+        </div>
+
+        <div class="card hidden" id="videoPromptListCard">
+          <div class="prompt-list-header">
+            <div class="card-title" style="margin-bottom: 0;">Fila de Prompts</div>
+            <span class="prompt-count" id="videoPromptCount">0/0</span>
+          </div>
+          <div class="prompt-list" id="videoPromptItems"></div>
+        </div>
+
+        <div class="progress-container hidden" id="videoProgressContainer">
+          <div class="progress-bar">
+            <div class="progress-fill" id="videoProgressFill"></div>
+          </div>
+          <div class="progress-text" id="videoProgressText">0%</div>
+          <div class="timer hidden" id="videoTimer">02:00</div>
+        </div>
+        <div class="folder-reminder hidden" id="videoFolderReminder"></div>
+
+        <button id="videoProcessBtn" class="btn btn-silver">Processar Prompts</button>
+        <button id="videoStartBtn" class="btn btn-primary hidden">Iniciar Envio</button>
+        <button id="videoStopBtn" class="btn btn-danger hidden">Parar</button>
+        <button id="videoEmergencyStopBtn" class="btn btn-emergency hidden">PARADA DE EMERGENCIA</button>
+        <button id="videoResendBtn" class="btn btn-warning hidden">Reenviar Nao Gerados</button>
+        <button id="videoCopyFailedBtn" class="btn btn-secondary hidden">Copiar Faltantes</button>
+        <button id="videoCancelAllBtn" class="btn btn-cancel-all hidden">Cancelar Tudo</button>
+
+        <div class="info-box" id="videoFormatInfo">
+          <strong>Formato:</strong> <code>PROMPT 1 [1, 2]: texto...</code><br>
+          <code>[1]</code> = 1a imagem, <code>[2]</code> = 2a imagem<br>
+          Sem <code>[ ]</code> = modo texto simples
+        </div>
+
+        <div class="card hidden" id="videoStatusCard">
+          <div class="card-title">Status dos Videos</div>
+          <div class="video-stats">
+            <div class="stat">
+              <span class="stat-value" id="videosSent">0</span>
+              <span class="stat-label">Enviados</span>
+            </div>
+            <div class="stat stat-success">
+              <span class="stat-value" id="videosGenerated">0</span>
+              <span class="stat-label">Gerados</span>
+            </div>
+            <div class="stat stat-warning">
+              <span class="stat-value" id="videosFailed">0</span>
+              <span class="stat-label">Nao Gerados</span>
+            </div>
+            <div class="stat stat-info">
+              <span class="stat-value" id="videosDownloaded">0</span>
+              <span class="stat-label">Baixados</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== ABA IMAGEM ==================== -->
+      <div class="tab-content" id="tabContentImage">
+        <div class="tab-blocked hidden" id="imageBlockedOverlay">
+          Video em processamento. Aguarde para enviar imagens.
+        </div>
+
+        <div class="card" id="imageSettingsCard">
+          <div class="card-title">Imagem</div>
+          <div class="setting-row">
+            <label>Pasta:</label>
+            <input type="text" id="imageFolder" value="DottiImagens" class="folder-input">
+          </div>
+        </div>
+
+        <div class="card" id="imageInputSection">
+          <div class="card-title">Prompts de imagem</div>
+          <textarea id="imagePromptsInput" placeholder="PROMPT 1 [1]: Descricao da primeira imagem com referencia 1...
+
+PROMPT 2 [1, 2]: Descricao com referencias 1 e 2...
+
+PROMPT 3: Descricao sem referencias (so texto)..."></textarea>
+        </div>
+
+        <div class="card hidden" id="imagePromptListCard">
+          <div class="prompt-list-header">
+            <div class="card-title" style="margin-bottom: 0;">Fila de Prompts</div>
+            <span class="prompt-count" id="imagePromptCount">0/0</span>
+          </div>
+          <div class="prompt-list" id="imagePromptItems"></div>
+        </div>
+
+        <div class="progress-container hidden" id="imageProgressContainer">
+          <div class="progress-bar">
+            <div class="progress-fill" id="imageProgressFill"></div>
+          </div>
+          <div class="progress-text" id="imageProgressText">0%</div>
+          <div class="timer hidden" id="imageTimer">02:00</div>
+        </div>
+        <div class="folder-reminder hidden" id="imageFolderReminder"></div>
+
+        <button id="imageProcessBtn" class="btn btn-silver">Processar Prompts</button>
+        <button id="imageStartBtn" class="btn btn-primary hidden">Iniciar Envio</button>
+        <button id="imageStopBtn" class="btn btn-danger hidden">Parar</button>
+        <button id="imageEmergencyStopBtn" class="btn btn-emergency hidden">PARADA DE EMERGENCIA</button>
+        <button id="imageResendBtn" class="btn btn-warning hidden">Reenviar Nao Gerados</button>
+        <button id="imageCopyFailedBtn" class="btn btn-secondary hidden">Copiar Faltantes</button>
+        <button id="imageCancelAllBtn" class="btn btn-cancel-all hidden">Cancelar Tudo</button>
+
+        <div class="info-box" id="imageFormatInfo">
+          <strong>Formato:</strong> <code>PROMPT 1 [1, 2]: texto...</code><br>
+          <code>[1]</code> = 1a referencia, <code>[2]</code> = 2a referencia<br>
+          Sem <code>[ ]</code> = modo texto simples
+        </div>
+
+        <div class="card hidden" id="imageStatusCard">
+          <div class="card-title">Status das Imagens</div>
+          <div class="video-stats">
+            <div class="stat">
+              <span class="stat-value" id="imagesSent">0</span>
+              <span class="stat-label">Enviadas</span>
+            </div>
+            <div class="stat stat-success">
+              <span class="stat-value" id="imagesGenerated">0</span>
+              <span class="stat-label">Geradas</span>
+            </div>
+            <div class="stat stat-warning">
+              <span class="stat-value" id="imagesFailed">0</span>
+              <span class="stat-label">Nao Geradas</span>
+            </div>
+            <div class="stat stat-info">
+              <span class="stat-value" id="imagesDownloaded">0</span>
+              <span class="stat-label">Baixadas</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Licenca (fora das abas) -->
+      <div class="card" id="licenseInfoCard" style="margin-top: 10px;">
+        <div class="card-title">Licenca FULL</div>
+        <div class="license-detail">
+          <span class="label">Chave</span>
+          <span class="value mono" id="licenseKeyDisplay">-</span>
+        </div>
+        <div class="license-detail">
+          <span class="label">Dispositivos</span>
+          <span class="value" id="devicesDisplay">-</span>
+        </div>
+        <div class="license-detail">
+          <span class="label">Limite prompts</span>
+          <span class="value" id="limitDisplay">500</span>
+        </div>
+        <button class="license-deactivate" id="deactivateBtn">Desativar deste dispositivo</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>v2.0.2</span> |
+    <a href="https://dottiflow.com.br/dashboard" target="_blank">Minha conta</a> |
+    <a href="https://dottiflow.com.br/suporte" target="_blank">Suporte</a>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>
