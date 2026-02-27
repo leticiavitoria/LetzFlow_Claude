@@ -1,72 +1,15 @@
 // ============================================
-// DOTTI SENDER FULL - BACKGROUND v2.0.0
-// Copyright (c) DottiFlow - Todos os direitos reservados
-// PROTECAO: SELETORES VEM DO SERVIDOR
+// LETZFLOW SENDER - BACKGROUND v2.1.0
+// Uso pessoal - sem licenciamento
 // ============================================
-
-importScripts("lib/dottiflow-sdk.js");
-
-const CONFIG = {
-    productSlug: "dotti-sender-full",
-    apiUrl: "https://dottiflow.com.br/api/v1",
-    debug: false
-};
 
 const WINDOW_SIZES = {
     mini: { width: 420, height: 320 },
     normal: { width: 1200, height: 800 }
 };
 
-let sdk = null;
-let isInitialized = false;
 let veoWindowId = null;
 let isWindowMini = false;
-
-// ============================================
-// PROTECAO: CONFIG/SELETORES DO SERVIDOR
-// ============================================
-let _serverConfig = null;
-let _configExpiry = 0;
-let _sessionToken = null;
-
-async function _fetchServerConfig() {
-    try {
-        const licenseData = await chrome.storage.local.get('dottiflow_license');
-        const licenseKey = licenseData.dottiflow_license?.key;
-        if (!licenseKey || !sdk?.deviceId) return null;
-
-        const response = await fetch(`${CONFIG.apiUrl}/extension/config`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Product-Slug': CONFIG.productSlug },
-            body: JSON.stringify({
-                license_key: licenseKey,
-                device_id: sdk.deviceId,
-                product_slug: CONFIG.productSlug,
-                session_token: _sessionToken,
-                version: chrome.runtime.getManifest().version
-            })
-        });
-
-        if (!response.ok) { _serverConfig = null; return null; }
-        const data = await response.json();
-        if (!data.success || !data.config) { _serverConfig = null; return null; }
-
-        _serverConfig = data.config;
-        _configExpiry = Date.now() + (data.ttl || 1800) * 1000;
-        _sessionToken = data.session_token || _sessionToken;
-        console.log("[Dotti] Config loaded from server");
-        return _serverConfig;
-    } catch (e) {
-        console.error("[Dotti] Config fetch error:", e);
-        _serverConfig = null;
-        return null;
-    }
-}
-
-async function _ensureConfig() {
-    if (_serverConfig && _configExpiry > Date.now()) return _serverConfig;
-    return await _fetchServerConfig();
-}
 
 // ============================================
 // SISTEMA DE FILA - v2.0.0 COM ESTADO COMPLETO
@@ -99,22 +42,6 @@ async function loadPendingDownloads() {
     }
 }
 
-// ============================================
-// SDK INITIALIZATION
-// ============================================
-async function initSDK() {
-    sdk = new DottiFlowSDK(CONFIG.productSlug, {
-        apiUrl: CONFIG.apiUrl,
-        debug: CONFIG.debug,
-        onLicenseValid: async () => { setBadgeStatus("active"); await _fetchServerConfig(); },
-        onLicenseInvalid: () => { _serverConfig = null; setBadgeStatus("inactive"); }
-    });
-    const valid = await sdk.init();
-    isInitialized = true;
-    setBadgeStatus(valid ? "active" : "inactive");
-    if (valid) await _fetchServerConfig();
-    return valid;
-}
 
 function setBadgeStatus(status) {
     if (status === "active") {
@@ -324,14 +251,7 @@ async function waitForCondition(tabId, conditionFn, args, timeout = 10000, inter
 // EXECUTE PROMPT - v2.0.0 COM WAITFOR
 // ============================================
 async function executePromptInTab(prompt, mediaType) {
-    // Padrao v1.0.1: config do servidor obrigatoria
-    const config = await _ensureConfig();
-    if (!config) {
-        console.log("[Dotti] BLOCKED: No server config");
-        return { success: false, error: "no_config", blocked: true };
-    }
-
-    console.log("[Dotti] Executing prompt", prompt.number);
+    console.log("[LetzFlow] Executing prompt", prompt.number);
     lastActivityTime = Date.now();
 
     // Verificar se a janela ainda existe
@@ -930,16 +850,6 @@ async function processNextPrompt() {
     const result = await executePromptInTab(prompt, queueMediaType);
     console.log("[Dotti] Prompt", prompt.number, "result:", JSON.stringify(result));
 
-    if (result.blocked) {
-        isProcessingQueue = false;
-        queuePaused = true;
-        setBadgeStatus("inactive");
-        await updateStatusOverlay("LICENCA INVALIDA", totalProcessed, totalInQueue);
-        notifyTab({ action: "LICENSE_ERROR", data: { message: "Configuracao do servidor nao disponivel" } });
-        await saveQueueState();
-        return;
-    }
-
     // v2.0.0: Se janela fechada, parar fila inteira
     if (!result.success && result.error === "window_closed") {
         isProcessingQueue = false;
@@ -1041,11 +951,6 @@ async function processNextPrompt() {
 }
 
 async function startQueue(prompts, settings, tabId, mediaType, bgMode) {
-    // Padrao v1.0.1: config do servidor + licenca ativa
-    const config = await _ensureConfig();
-    if (!config) return { success: false, error: "no_config", message: "Nao foi possivel obter configuracao do servidor. Verifique sua licenca." };
-    if (!sdk?.isLicenseActive()) return { success: false, error: "invalid_license", message: "Licenca invalida ou expirada" };
-
     if (!tabId && targetTabId) tabId = targetTabId;
     if (!tabId) return { success: false, error: "no_tab" };
 
@@ -1139,10 +1044,6 @@ async function pauseQueue() {
 }
 
 async function resumeQueue() {
-    // Padrao v1.0.1: config do servidor
-    const config = await _ensureConfig();
-    if (!config) return { success: false, error: "no_config" };
-
     queuePaused = false;
     isProcessingQueue = true;
     lastActivityTime = Date.now();
@@ -1383,7 +1284,7 @@ function findOldestPending() {
 
 // Helper: construir filename customizado
 function buildCustomFilename(pending, downloadItem) {
-    const folder = pending.folder || "DottiVideos";
+    const folder = pending.folder || "LetzVideos";
     const promptNum = pending.promptNumber || 0;
     const resolution = pending.resolution || "1080p";
     const type = pending.type || "video";
@@ -1574,17 +1475,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         }
     } else if (alarm.name === "dottiNextPrompt") {
         processNextPrompt();
-    } else if (alarm.name === "dottiLicenseCheck") {
-        if (sdk) {
-            const savedKey = await sdk.getSavedLicense();
-            if (savedKey) {
-                const v = await sdk.validateLicense(savedKey);
-                if (!v) { _serverConfig = null; setBadgeStatus("inactive"); }
-                else await _fetchServerConfig();
-            }
-        }
-    } else if (alarm.name === "dottiConfigRefresh") {
-        await _fetchServerConfig();
     } else if (alarm.name === "dottiWatchdog") {
         // v2.1.0: Watchdog - detecta fila travada e retoma automaticamente
         if (isProcessingQueue && !queuePaused && promptQueue.length > 0) {
@@ -1608,10 +1498,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
 });
 
-chrome.alarms.create("dottiKeepAlive", { periodInMinutes: 0.3 }); // v2.1.0: 18s keep-alive
-chrome.alarms.create("dottiLicenseCheck", { periodInMinutes: 60 });
-chrome.alarms.create("dottiConfigRefresh", { periodInMinutes: 25 });
-chrome.alarms.create("dottiWatchdog", { periodInMinutes: 0.33 }); // v2.1.0: Watchdog a cada 20s
+chrome.alarms.create("dottiKeepAlive", { periodInMinutes: 0.3 }); // 18s keep-alive
+chrome.alarms.create("dottiWatchdog", { periodInMinutes: 0.33 }); // Watchdog a cada 20s
 
 // ============================================
 // MESSAGE HANDLER - v2.0.0 COM GET_FULL_STATE
@@ -1619,15 +1507,13 @@ chrome.alarms.create("dottiWatchdog", { periodInMinutes: 0.33 }); // v2.1.0: Wat
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
         try {
-            await _bootPromise; // v2.1.0: Garantir que estado foi carregado
-            if (!isInitialized) await initSDK();
+            await _bootPromise;
             switch (message.action) {
                 case "GET_STATUS":
                     sendResponse({
                         isInitialized: true,
-                        hasLicense: sdk?.isLicenseActive() || false,
-                        licenseInfo: sdk?.getLicenseInfo() || null,
-                        hasServerConfig: !!_serverConfig,
+                        hasLicense: true,
+                        licenseInfo: null,
                         queueLength: promptQueue.length,
                         isProcessing: isProcessingQueue,
                         isPaused: queuePaused,
@@ -1636,7 +1522,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     });
                     break;
 
-                // v2.0.0: Estado completo para recuperacao do painel
                 case "GET_FULL_STATE":
                     sendResponse({
                         isProcessing: isProcessingQueue,
@@ -1650,58 +1535,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         isWindowMini: isWindowMini,
                         mediaType: queueMediaType
                     });
-                    break;
-
-                case "ACTIVATE_LICENSE":
-                    if (!message.licenseKey) { sendResponse({ success: false, error: "missing_key" }); break; }
-                    console.log("[Dotti] ACTIVATE_LICENSE key:", message.licenseKey, "deviceId:", sdk?.deviceId);
-                    const ar = await sdk.activateLicense(message.licenseKey);
-                    console.log("[Dotti] ACTIVATE_LICENSE resultado:", JSON.stringify(ar));
-                    if (ar.success) {
-                        // Verificar limite de dispositivos (servidor pode nao bloquear)
-                        const lic = ar.license || {};
-                        const devUsed = parseInt(lic.devices_used) || 0;
-                        const devMax = parseInt(lic.max_devices) || 2;
-                        console.log("[Dotti] Dispositivos:", devUsed + "/" + devMax);
-                        if (devUsed > devMax) {
-                            console.log("[Dotti] BLOQUEADO: limite de dispositivos excedido", devUsed + "/" + devMax);
-                            sendResponse({ success: false, error: "max_devices", message: "Limite de dispositivos atingido (" + devUsed + "/" + devMax + "). Desative um dispositivo no painel." });
-                            break;
-                        }
-                        await _fetchServerConfig();
-                    }
-                    sendResponse(ar);
-                    break;
-
-                case "DEACTIVATE_LICENSE":
-                    const dr = await sdk.deactivateLicense();
-                    _serverConfig = null; _sessionToken = null;
-                    sendResponse(dr);
-                    break;
-
-                case "VERIFY_SESSION_FOR_SENDING":
-                    const savedLicense = await sdk.getSavedLicense();
-                    if (savedLicense) {
-                        const validateResult = await sdk.validateLicense(savedLicense);
-                        const isValid = validateResult === true || validateResult?.valid === true;
-                        if (isValid) {
-                            // Verificar limite de dispositivos
-                            const li = sdk.getLicenseInfo();
-                            const dUsed = parseInt(li?.devicesUsed || li?.devices_used) || 0;
-                            const dMax = parseInt(li?.maxDevices || li?.max_devices) || 2;
-                            if (dUsed > dMax) {
-                                console.log("[Dotti] VERIFY blocked: devices", dUsed + "/" + dMax);
-                                sendResponse({ valid: false, error: 'max_devices', message: 'Limite de dispositivos excedido' });
-                                break;
-                            }
-                            const vConfig = await _ensureConfig();
-                            sendResponse({ valid: true, hasConfig: !!vConfig });
-                        } else {
-                            sendResponse({ valid: false, error: validateResult?.error || 'validation_failed' });
-                        }
-                    } else {
-                        sendResponse({ valid: false, error: 'no_license' });
-                    }
                     break;
 
                 case "OPEN_VEO_WINDOW":
@@ -2181,15 +2014,7 @@ chrome.action.onClicked.addListener(async () => {
 chrome.runtime.onInstalled.addListener(async () => {
     await _bootPromise;
 
-    // Limpar dados de teste/invalidos do storage
-    const licData = await chrome.storage.local.get('dottiflow_license');
-    const savedKey = licData.dottiflow_license?.key;
-    if (savedKey && (savedKey.includes("TESTE") || savedKey === "test-device")) {
-        console.log("[Dotti] Removing invalid test license data");
-        await chrome.storage.local.remove(['dottiflow_license', 'dottiflow_session', 'dottiflow_last_heartbeat']);
-    }
-
-    // v2.0.0: Permitir downloads multiplos automaticos no labs.google
+    // Permitir downloads multiplos automaticos no labs.google
     // Evita que o Chrome pergunte "Este site quer baixar varios ficheiros"
     try {
         await chrome.contentSettings.automaticDownloads.set({
@@ -2205,12 +2030,9 @@ chrome.runtime.onInstalled.addListener(async () => {
 chrome.runtime.onStartup.addListener(async () => {
     await _bootPromise;
     if (!queuePaused && promptQueue.length > 0) {
-        const cfg = await _ensureConfig();
-        if (cfg) {
-            isProcessingQueue = true;
-            setBadgeStatus("processing");
-            setTimeout(processNextPrompt, 3000);
-        }
+        isProcessingQueue = true;
+        setBadgeStatus("processing");
+        setTimeout(processNextPrompt, 3000);
     }
 });
 
@@ -2218,16 +2040,9 @@ chrome.runtime.onStartup.addListener(async () => {
 // Resolve UMA vez e depois retorna instantaneamente
 // ============================================
 const _bootPromise = (async () => {
-    // Garantir device_id unico antes do SDK (evita colisao de hash entre navegadores)
-    const stored = await chrome.storage.local.get('dottiflow_device_id');
-    if (!stored.dottiflow_device_id) {
-        const uniqueId = 'ext_' + crypto.randomUUID().replace(/-/g, '').substring(0, 12);
-        await chrome.storage.local.set({ dottiflow_device_id: uniqueId });
-        console.log("[Dotti] Device ID gerado:", uniqueId);
-    }
-    await initSDK();
     await loadQueueState();
     await loadTrackedDownloads();
     await loadPendingDownloads();
-    console.log("[Dotti] Boot complete. Queue:", promptQueue.length, "Processing:", isProcessingQueue);
+    setBadgeStatus("active");
+    console.log("[LetzFlow] Boot complete. Queue:", promptQueue.length, "Processing:", isProcessingQueue);
 })();

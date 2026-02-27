@@ -1,6 +1,6 @@
 // ============================================
-// DOTTI SENDER FULL - CONTENT SCRIPT v2.0.0
-// Copyright (c) DottiFlow - Todos os direitos reservados
+// LETZFLOW SENDER - CONTENT SCRIPT v2.1.0
+// Uso pessoal - sem licenciamento
 // EXECUTOR DE DOM (recebe comandos do background)
 // ============================================
 
@@ -909,8 +909,7 @@
         header.innerHTML = `
             <div class="dotti-panel-title">
                 <span class="dotti-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13 2L4 14H11L10 22L19 10H12L13 2Z" fill="#FFD700" stroke="#FFD700" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                <span>Dotti Sender</span>
-                <span class="dotti-badge">FULL</span>
+                <span>LetzFlow</span>
             </div>
             <div class="dotti-panel-actions">
                 <button class="dotti-btn-minimize" title="Minimizar">&minus;</button>
@@ -2912,7 +2911,7 @@
             toggleBtn = document.createElement("div");
             toggleBtn.id = TOGGLE_BTN_ID;
             toggleBtn.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13 2L4 14H11L10 22L19 10H12L13 2Z" fill="#FFD700" stroke="#FFD700" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-            toggleBtn.title = "Dotti Sender FULL";
+            toggleBtn.title = "LetzFlow Sender";
             toggleBtn.addEventListener("click", togglePanel);
             document.body.appendChild(toggleBtn);
         }
@@ -2946,7 +2945,7 @@
             }
         }, 3000);
 
-        console.log("[Dotti Sender FULL] v2.0.2 ready");
+        console.log("[LetzFlow Sender] v2.1.0 ready");
     }
 
     if (document.readyState === "loading") {
