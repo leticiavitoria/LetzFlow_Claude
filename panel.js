@@ -61,7 +61,7 @@ function buildLocalFilename(tab, prompt, resolution) {
         .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
         .replace(/\s+/g, "_").trim();
     if (!slug) slug = "prompt";
-    return folder + "/" + String(num).padStart(3, "0") + "_PROMPT_" + String(num).padStart(2, "0") + "_" + resolution + "_" + slug + "." + ext;
+    return folder + "/PROMPT_" + String(num).padStart(3, "0") + "_" + resolution + "_" + slug + "." + ext;
 }
 
 // ============================================
@@ -128,7 +128,6 @@ function setupMessageListener() {
             case "PROMPT_RESULT": handlePromptResult(data); break;
             case "BATCH_PAUSE": handleBatchPause(data); break;
             case "QUEUE_COMPLETE": handleQueueComplete(); break;
-            case "LICENSE_ERROR": break; // no-op: license removed
             case "QUEUE_ERROR": handleQueueError(data); break;
             case "DOWNLOAD_INTERCEPTED": handleDownloadIntercepted(data); break;
         }
@@ -558,7 +557,7 @@ async function downloadMedia(tab, idx) {
     }
     console.log("[Panel] downloadMedia INICIANDO prompt", p.number, "tab:", tab, "resolution:", st.resolution, "url:", p.mediaUrl.substring(0, 80));
     p._downloading = true;
-    _downloadedVideoUrls.add(p.mediaUrl); // Registrar URL como baixada
+    // Registrar URL so apos download confirmado (nao antes)
 
     const resolution = st.resolution;
 
@@ -568,7 +567,6 @@ async function downloadMedia(tab, idx) {
             try {
                 p.mediaStatus = "upscaling";
                 displayPrompts(tab);
-                // v2.0.1: REGISTER so para upscale (interceptor do browser)
                 try {
                     await chrome.runtime.sendMessage({
                         action: "REGISTER_UPSCALE_DOWNLOAD",
@@ -583,7 +581,9 @@ async function downloadMedia(tab, idx) {
                 }, "*");
                 setTimeout(() => {
                     if (p.mediaStatus === "upscaling") {
-                        p.mediaStatus = "downloaded";
+                        // Timeout: reverter para "generated" para permitir retry
+                        console.log("[Panel] Upscale timeout prompt", p.number, "- revertendo para generated");
+                        p.mediaStatus = "generated";
                         p._downloading = false;
                         displayPrompts(tab);
                         updateStatsDisplay(tab);
@@ -593,9 +593,7 @@ async function downloadMedia(tab, idx) {
             } catch (e) {}
         }
 
-        // Video 720p: download direto com URL do webRequest (storage.googleapis.com)
-        // v2.0.1 FIX: NAO usar REFRESH_VIDEO_URL - a URL do webRequest ja e a URL final do arquivo.
-        // REFRESH buscava URL por prompt text no DOM, que e fragil com zoom out.
+        // Video 720p: download direto com URL do webRequest
         let downloadUrl = p.mediaUrl;
         try {
             const r = await chrome.runtime.sendMessage({
@@ -606,13 +604,20 @@ async function downloadMedia(tab, idx) {
             if (r.success) {
                 p.mediaStatus = "downloaded";
                 p._downloading = false;
+                _downloadedVideoUrls.add(p.mediaUrl);
                 displayPrompts(tab);
                 updateStatsDisplay(tab);
                 updateLog(p.number, tab, "downloaded");
             } else {
+                console.log("[Panel] DOWNLOAD_VIDEO falhou prompt", p.number, "erro:", r.error);
                 p._downloading = false;
+                displayPrompts(tab);
+                updateStatsDisplay(tab);
             }
-        } catch (e) { p._downloading = false; }
+        } catch (e) {
+            console.log("[Panel] DOWNLOAD_VIDEO exception prompt", p.number, e.message);
+            p._downloading = false;
+        }
 
     } else {
         // Image 2K: upscale via Flow UI
@@ -620,7 +625,6 @@ async function downloadMedia(tab, idx) {
             try {
                 p.mediaStatus = "upscaling";
                 displayPrompts(tab);
-                // v2.0.1: REGISTER so para upscale (interceptor do browser)
                 try {
                     await chrome.runtime.sendMessage({
                         action: "REGISTER_UPSCALE_DOWNLOAD",
@@ -635,17 +639,19 @@ async function downloadMedia(tab, idx) {
                 }, "*");
                 setTimeout(() => {
                     if (p.mediaStatus === "upscaling") {
-                        p.mediaStatus = "downloaded";
+                        // Timeout: reverter para "generated" para permitir retry
+                        console.log("[Panel] Image upscale timeout prompt", p.number, "- revertendo para generated");
+                        p.mediaStatus = "generated";
                         p._downloading = false;
                         displayPrompts(tab);
                         updateStatsDisplay(tab);
                     }
-                }, 60000);
+                }, 120000); // 120s para imagem tambem (era 60s)
                 return;
             } catch (e) {}
         }
 
-        // Image 1K: direct download (SEM REGISTER - download direto ja tem filename)
+        // Image 1K: direct download
         try {
             const r = await chrome.runtime.sendMessage({
                 action: "DOWNLOAD_IMAGE",
@@ -655,13 +661,20 @@ async function downloadMedia(tab, idx) {
             if (r.success) {
                 p.mediaStatus = "downloaded";
                 p._downloading = false;
+                _downloadedVideoUrls.add(p.mediaUrl);
                 displayPrompts(tab);
                 updateStatsDisplay(tab);
                 updateLog(p.number, tab, "downloaded");
             } else {
+                console.log("[Panel] DOWNLOAD_IMAGE falhou prompt", p.number, "erro:", r.error);
                 p._downloading = false;
+                displayPrompts(tab);
+                updateStatsDisplay(tab);
             }
-        } catch (e) { p._downloading = false; }
+        } catch (e) {
+            console.log("[Panel] DOWNLOAD_IMAGE exception prompt", p.number, e.message);
+            p._downloading = false;
+        }
     }
 }
 

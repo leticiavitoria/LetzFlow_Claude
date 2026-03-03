@@ -110,13 +110,17 @@ async function toggleWindowSize() {
                 await updateStatusOverlay("Processando...", totalProcessed, totalProcessed + promptQueue.length);
             }
         } else {
+            // PRIMEIRO remover overlay (antes de redimensionar), para evitar
+            // que o overlay em 100vw/100vh cubra a tela expandida
+            await removeStatusOverlay();
             await chrome.windows.update(veoWindowId, {
                 width: size.width,
                 height: size.height,
                 left: Math.round((pd.workArea.width - size.width) / 2),
                 top: Math.round((pd.workArea.height - size.height) / 2)
             });
-            await removeStatusOverlay();
+            // Garantir que overlay foi removido e pagina restaurada
+            await restorePageAfterOverlay();
         }
         await chrome.storage.local.set({ isWindowMini });
         return { success: true, isMini: isWindowMini };
@@ -659,13 +663,17 @@ async function executePromptInTab(prompt, mediaType) {
         if (!fillResult?.[0]?.result) return { success: false, error: "fill_failed" };
 
         // Esperar DOM atualizar com o texto do Slate
-        await waitForCondition(targetTabId, function() {
+        const fillConfirmed = await waitForCondition(targetTabId, function() {
             const ta = document.querySelector("[role='textbox']");
             if (!ta) return false;
             const text = ta.textContent || "";
             // Verificar que tem conteudo alem do placeholder
             return text.length > 30 || (text.length > 0 && !text.includes("O que voc"));
         }, [], 5000, 300);
+        if (!fillConfirmed) {
+            console.log("[Dotti] Step 4 FAILED: text fill not confirmed in textbox");
+            return { success: false, error: "fill_not_confirmed" };
+        }
         await sleep(500);
 
         // 5. Click submit (botao "Criar" com icone arrow_forward)
@@ -719,7 +727,23 @@ async function executePromptInTab(prompt, mediaType) {
                     }
                 }
             });
-            await sleep(2000);
+            // Verificar novamente apos retry
+            const retryConfirmed = await waitForCondition(targetTabId, function() {
+                const ta = document.querySelector("[role='textbox']");
+                if (!ta) return true;
+                const text = ta.textContent || "";
+                if (text.includes("O que voc") && text.length < 40) return true;
+                if (text.trim().length === 0) return true;
+                for (const btn of document.querySelectorAll("button")) {
+                    const icon = btn.querySelector("i");
+                    if (icon?.textContent?.trim() === "arrow_forward" && btn.disabled) return true;
+                }
+                return false;
+            }, [], 5000, 500);
+            if (!retryConfirmed) {
+                console.log("[Dotti] Submit FAILED after retry for prompt", prompt.number);
+                return { success: false, error: "submit_not_confirmed" };
+            }
         }
 
         console.log("[Dotti] Prompt", prompt.number, "OK");
@@ -748,7 +772,7 @@ async function injectStatusOverlay() {
                     document.head.appendChild(link);
                 }
                 link.href = iconUrl;
-                document.title = "Dotti Sender FULL";
+                document.title = "LetzFlow Sender";
                 if (window.innerWidth > mW + 100 || window.innerHeight > mH + 100) return;
                 // Esconder sidebar e botao toggle na mini window
                 const sidebar = document.getElementById("dotti-sender-full-panel");
@@ -759,7 +783,7 @@ async function injectStatusOverlay() {
                 document.documentElement.classList.remove("dotti-sidebar-open");
                 const o = document.createElement("div");
                 o.id = "dotti-status-overlay";
-                o.innerHTML = `<style>#dotti-status-overlay{position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;margin:0!important;padding:20px!important;box-sizing:border-box!important;background:linear-gradient(135deg,#1a1a2e,#16213e)!important;z-index:2147483647!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;font-family:'Segoe UI',Arial,sans-serif!important;color:#fff!important;pointer-events:none!important;transform:none!important;contain:none!important}#dotti-status-overlay .logo{font-size:48px!important;margin-bottom:15px!important}#dotti-status-overlay .title{font-size:22px!important;font-weight:700!important;margin-bottom:8px!important;background:linear-gradient(90deg,#00d4ff,#7b2cbf)!important;-webkit-background-clip:text!important;-webkit-text-fill-color:transparent!important}#dotti-status-overlay .status{font-size:14px!important;color:#a0a0a0!important;margin-bottom:20px!important}#dotti-status-overlay .pbar{width:80%!important;height:6px!important;background:#2a2a4a!important;border-radius:3px!important;overflow:hidden!important;margin-bottom:15px!important}#dotti-status-overlay .pfill{height:100%!important;background:linear-gradient(90deg,#00d4ff,#7b2cbf)!important;border-radius:3px!important;transition:width .3s!important;width:0}#dotti-status-overlay .count{font-size:36px!important;font-weight:700!important;color:#00d4ff!important}#dotti-status-overlay .label{font-size:12px!important;color:#666!important;margin-top:5px!important}</style><div class="logo">⚡</div><div class="title">DOTTI SENDER FULL</div><div class="status" id="dso-status">Preparando...</div><div class="pbar"><div class="pfill" id="dso-progress"></div></div><div class="count" id="dso-count">0/0</div><div class="label">prompts enviados</div>`;
+                o.innerHTML = `<style>#dotti-status-overlay{position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;margin:0!important;padding:20px!important;box-sizing:border-box!important;background:linear-gradient(135deg,#1a1a2e,#16213e)!important;z-index:2147483647!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;font-family:'Segoe UI',Arial,sans-serif!important;color:#fff!important;pointer-events:none!important;transform:none!important;contain:none!important}#dotti-status-overlay .logo{font-size:48px!important;margin-bottom:15px!important}#dotti-status-overlay .title{font-size:22px!important;font-weight:700!important;margin-bottom:8px!important;background:linear-gradient(90deg,#00d4ff,#7b2cbf)!important;-webkit-background-clip:text!important;-webkit-text-fill-color:transparent!important}#dotti-status-overlay .status{font-size:14px!important;color:#a0a0a0!important;margin-bottom:20px!important}#dotti-status-overlay .pbar{width:80%!important;height:6px!important;background:#2a2a4a!important;border-radius:3px!important;overflow:hidden!important;margin-bottom:15px!important}#dotti-status-overlay .pfill{height:100%!important;background:linear-gradient(90deg,#00d4ff,#7b2cbf)!important;border-radius:3px!important;transition:width .3s!important;width:0}#dotti-status-overlay .count{font-size:36px!important;font-weight:700!important;color:#00d4ff!important}#dotti-status-overlay .label{font-size:12px!important;color:#666!important;margin-top:5px!important}</style><div class="logo">⚡</div><div class="title">LETZFLOW SENDER</div><div class="status" id="dso-status">Preparando...</div><div class="pbar"><div class="pfill" id="dso-progress"></div></div><div class="count" id="dso-count">0/0</div><div class="label">prompts enviados</div>`;
                 document.documentElement.appendChild(o);
             },
             args: [chrome.runtime.getURL("icons/icon128.png"), WINDOW_SIZES.mini.width, WINDOW_SIZES.mini.height]
@@ -799,9 +823,40 @@ async function removeStatusOverlay() {
                 if (sidebar) sidebar.style.display = "";
                 const toggleBtn = document.getElementById("dotti-sender-toggle-btn");
                 if (toggleBtn) toggleBtn.style.display = "";
+                // Restaurar classe que controla layout do body
+                document.documentElement.classList.add("dotti-sidebar-open");
             }
         });
-    } catch (e) {}
+    } catch (e) {
+        console.log("[Dotti] removeStatusOverlay error:", e.message);
+    }
+}
+
+// Garantir que pagina esta restaurada apos remover overlay
+async function restorePageAfterOverlay() {
+    if (!targetTabId) return;
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId: targetTabId },
+            world: "MAIN",
+            func: () => {
+                // Verificar se overlay ainda existe e remover forçadamente
+                const overlay = document.getElementById("dotti-status-overlay");
+                if (overlay) {
+                    console.log("[Dotti DOM] Overlay ainda presente - removendo forcadamente");
+                    overlay.remove();
+                }
+                // Restaurar visibilidade dos elementos
+                const sidebar = document.getElementById("dotti-sender-full-panel");
+                if (sidebar) sidebar.style.display = "";
+                const toggleBtn = document.getElementById("dotti-sender-toggle-btn");
+                if (toggleBtn) toggleBtn.style.display = "";
+                document.documentElement.classList.add("dotti-sidebar-open");
+            }
+        });
+    } catch (e) {
+        console.log("[Dotti] restorePageAfterOverlay error:", e.message);
+    }
 }
 
 // ============================================
@@ -1264,7 +1319,7 @@ function isFlowMediaDownload(url, mime) {
 function findOldestPending() {
     const now = Date.now();
     for (const key of Object.keys(pendingUpscaleDownloads)) {
-        if (now - pendingUpscaleDownloads[key].timestamp > 300000) {
+        if (now - pendingUpscaleDownloads[key].timestamp > 600000) { // 10 min (era 5 min)
             delete pendingUpscaleDownloads[key];
         }
     }
@@ -1310,7 +1365,7 @@ function buildCustomFilename(pending, downloadItem) {
         .trim();
     if (!promptSlug) promptSlug = "prompt";
 
-    return folder + "/" + String(promptNum).padStart(3, "0") + "_PROMPT_" + String(promptNum).padStart(2, "0") + "_" + resolution + "_" + promptSlug + "." + extension;
+    return folder + "/PROMPT_" + String(promptNum).padStart(3, "0") + "_" + resolution + "_" + promptSlug + "." + extension;
 }
 
 // PRINCIPAL: Redirecionar nome/pasta de downloads do Flow
@@ -1512,8 +1567,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 case "GET_STATUS":
                     sendResponse({
                         isInitialized: true,
-                        hasLicense: true,
-                        licenseInfo: null,
                         queueLength: promptQueue.length,
                         isProcessing: isProcessingQueue,
                         isPaused: queuePaused,
@@ -1771,7 +1824,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     pendingUpscaleDownloads[regId] = {
                         promptNumber: message.promptNumber,
                         promptText: message.promptText || "",
-                        folder: message.folder || "DottiVideos",
+                        folder: message.folder || "LetzVideos",
                         resolution: message.resolution || "1080p",
                         type: message.downloadType || "video",
                         timestamp: Date.now()
@@ -1928,8 +1981,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                             batchSize: s.batchSize || 20,
                             batchInterval: s.batchInterval || 90,
                             promptDelay: s.promptDelay || 3,
-                            videoFolder: s.videoFolder || "DottiVideos",
-                            imageFolder: s.imageFolder || "DottiImagens",
+                            videoFolder: s.videoFolder || "LetzVideos",
+                            imageFolder: s.imageFolder || "LetzImagens",
                             videoResolution: s.videoResolution || "720",
                             imageResolution: s.imageResolution || "1024",
                             videoOutputCount: s.videoOutputCount || 1,

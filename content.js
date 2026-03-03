@@ -2468,19 +2468,17 @@
                 sendResponse({ success: true });
                 break;
 
-            case "LICENSE_ERROR":
-                notifyPanel({ type: "LICENSE_ERROR", data: message.data });
-                sendResponse({ success: true });
-                break;
+            // LICENSE_ERROR removido (v2.1.0)
 
             // v2.1.0: Preparar para proximo prompt - limpar galeria/elementos
             case "PREPARE_FOR_NEXT_PROMPT":
                 (async () => {
                     try {
                         await clearElements();
-                        // Limpar imagens detectadas para evitar cross-matching
-                        window.DOTTI_DETECTED_IMAGES = {};
-                        console.log("[Dotti DOM] Galeria limpa para proximo prompt");
+                        // NAO limpar DOTTI_DETECTED_IMAGES aqui - a dedup por src URL
+                        // em scanForImages() ja previne re-deteccao, e limpar antes
+                        // pode perder imagens do prompt anterior que ainda nao foram baixadas
+                        console.log("[Dotti DOM] Elementos limpos para proximo prompt");
                         sendResponse({ success: true });
                     } catch (e) {
                         console.error("[Dotti DOM] Erro ao limpar galeria:", e);
