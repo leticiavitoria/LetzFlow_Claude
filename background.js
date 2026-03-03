@@ -1365,7 +1365,7 @@ function buildCustomFilename(pending, downloadItem) {
         .trim();
     if (!promptSlug) promptSlug = "prompt";
 
-    return folder + "/PROMPT_" + String(promptNum).padStart(3, "0") + "_" + resolution + "_" + promptSlug + "." + extension;
+    return folder + "/" + String(promptNum).padStart(3, "0") + "_PROMPT_" + String(promptNum).padStart(2, "0") + "_" + resolution + "_" + promptSlug + "." + extension;
 }
 
 // PRINCIPAL: Redirecionar nome/pasta de downloads do Flow

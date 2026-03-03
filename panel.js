@@ -61,7 +61,7 @@ function buildLocalFilename(tab, prompt, resolution) {
         .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
         .replace(/\s+/g, "_").trim();
     if (!slug) slug = "prompt";
-    return folder + "/PROMPT_" + String(num).padStart(3, "0") + "_" + resolution + "_" + slug + "." + ext;
+    return folder + "/" + String(num).padStart(3, "0") + "_PROMPT_" + String(num).padStart(2, "0") + "_" + resolution + "_" + slug + "." + ext;
 }
 
 // ============================================
