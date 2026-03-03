@@ -1,72 +1,15 @@
 // ============================================
-// DOTTI SENDER FULL - BACKGROUND v2.0.0
-// Copyright (c) DottiFlow - Todos os direitos reservados
-// PROTECAO: SELETORES VEM DO SERVIDOR
+// LETZFLOW SENDER - BACKGROUND v2.1.0
+// Uso pessoal - sem licenciamento
 // ============================================
-
-importScripts("lib/dottiflow-sdk.js");
-
-const CONFIG = {
-    productSlug: "dotti-sender-full",
-    apiUrl: "https://dottiflow.com.br/api/v1",
-    debug: false
-};
 
 const WINDOW_SIZES = {
     mini: { width: 420, height: 320 },
     normal: { width: 1200, height: 800 }
 };
 
-let sdk = null;
-let isInitialized = false;
 let veoWindowId = null;
 let isWindowMini = false;
-
-// ============================================
-// PROTECAO: CONFIG/SELETORES DO SERVIDOR
-// ============================================
-let _serverConfig = null;
-let _configExpiry = 0;
-let _sessionToken = null;
-
-async function _fetchServerConfig() {
-    try {
-        const licenseData = await chrome.storage.local.get('dottiflow_license');
-        const licenseKey = licenseData.dottiflow_license?.key;
-        if (!licenseKey || !sdk?.deviceId) return null;
-
-        const response = await fetch(`${CONFIG.apiUrl}/extension/config`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Product-Slug': CONFIG.productSlug },
-            body: JSON.stringify({
-                license_key: licenseKey,
-                device_id: sdk.deviceId,
-                product_slug: CONFIG.productSlug,
-                session_token: _sessionToken,
-                version: chrome.runtime.getManifest().version
-            })
-        });
-
-        if (!response.ok) { _serverConfig = null; return null; }
-        const data = await response.json();
-        if (!data.success || !data.config) { _serverConfig = null; return null; }
-
-        _serverConfig = data.config;
-        _configExpiry = Date.now() + (data.ttl || 1800) * 1000;
-        _sessionToken = data.session_token || _sessionToken;
-        console.log("[Dotti] Config loaded from server");
-        return _serverConfig;
-    } catch (e) {
-        console.error("[Dotti] Config fetch error:", e);
-        _serverConfig = null;
-        return null;
-    }
-}
-
-async function _ensureConfig() {
-    if (_serverConfig && _configExpiry > Date.now()) return _serverConfig;
-    return await _fetchServerConfig();
-}
 
 // ============================================
 // SISTEMA DE FILA - v2.0.0 COM ESTADO COMPLETO
@@ -99,22 +42,6 @@ async function loadPendingDownloads() {
     }
 }
 
-// ============================================
-// SDK INITIALIZATION
-// ============================================
-async function initSDK() {
-    sdk = new DottiFlowSDK(CONFIG.productSlug, {
-        apiUrl: CONFIG.apiUrl,
-        debug: CONFIG.debug,
-        onLicenseValid: async () => { setBadgeStatus("active"); await _fetchServerConfig(); },
-        onLicenseInvalid: () => { _serverConfig = null; setBadgeStatus("inactive"); }
-    });
-    const valid = await sdk.init();
-    isInitialized = true;
-    setBadgeStatus(valid ? "active" : "inactive");
-    if (valid) await _fetchServerConfig();
-    return valid;
-}
 
 function setBadgeStatus(status) {
     if (status === "active") {
@@ -183,13 +110,17 @@ async function toggleWindowSize() {
                 await updateStatusOverlay("Processando...", totalProcessed, totalProcessed + promptQueue.length);
             }
         } else {
+            // PRIMEIRO remover overlay (antes de redimensionar), para evitar
+            // que o overlay em 100vw/100vh cubra a tela expandida
+            await removeStatusOverlay();
             await chrome.windows.update(veoWindowId, {
                 width: size.width,
                 height: size.height,
                 left: Math.round((pd.workArea.width - size.width) / 2),
                 top: Math.round((pd.workArea.height - size.height) / 2)
             });
-            await removeStatusOverlay();
+            // Garantir que overlay foi removido e pagina restaurada
+            await restorePageAfterOverlay();
         }
         await chrome.storage.local.set({ isWindowMini });
         return { success: true, isMini: isWindowMini };
@@ -324,14 +255,7 @@ async function waitForCondition(tabId, conditionFn, args, timeout = 10000, inter
 // EXECUTE PROMPT - v2.0.0 COM WAITFOR
 // ============================================
 async function executePromptInTab(prompt, mediaType) {
-    // Padrao v1.0.1: config do servidor obrigatoria
-    const config = await _ensureConfig();
-    if (!config) {
-        console.log("[Dotti] BLOCKED: No server config");
-        return { success: false, error: "no_config", blocked: true };
-    }
-
-    console.log("[Dotti] Executing prompt", prompt.number);
+    console.log("[LetzFlow] Executing prompt", prompt.number);
     lastActivityTime = Date.now();
 
     // Verificar se a janela ainda existe
@@ -739,13 +663,17 @@ async function executePromptInTab(prompt, mediaType) {
         if (!fillResult?.[0]?.result) return { success: false, error: "fill_failed" };
 
         // Esperar DOM atualizar com o texto do Slate
-        await waitForCondition(targetTabId, function() {
+        const fillConfirmed = await waitForCondition(targetTabId, function() {
             const ta = document.querySelector("[role='textbox']");
             if (!ta) return false;
             const text = ta.textContent || "";
             // Verificar que tem conteudo alem do placeholder
             return text.length > 30 || (text.length > 0 && !text.includes("O que voc"));
         }, [], 5000, 300);
+        if (!fillConfirmed) {
+            console.log("[Dotti] Step 4 FAILED: text fill not confirmed in textbox");
+            return { success: false, error: "fill_not_confirmed" };
+        }
         await sleep(500);
 
         // 5. Click submit (botao "Criar" com icone arrow_forward)
@@ -799,7 +727,23 @@ async function executePromptInTab(prompt, mediaType) {
                     }
                 }
             });
-            await sleep(2000);
+            // Verificar novamente apos retry
+            const retryConfirmed = await waitForCondition(targetTabId, function() {
+                const ta = document.querySelector("[role='textbox']");
+                if (!ta) return true;
+                const text = ta.textContent || "";
+                if (text.includes("O que voc") && text.length < 40) return true;
+                if (text.trim().length === 0) return true;
+                for (const btn of document.querySelectorAll("button")) {
+                    const icon = btn.querySelector("i");
+                    if (icon?.textContent?.trim() === "arrow_forward" && btn.disabled) return true;
+                }
+                return false;
+            }, [], 5000, 500);
+            if (!retryConfirmed) {
+                console.log("[Dotti] Submit FAILED after retry for prompt", prompt.number);
+                return { success: false, error: "submit_not_confirmed" };
+            }
         }
 
         console.log("[Dotti] Prompt", prompt.number, "OK");
@@ -828,7 +772,7 @@ async function injectStatusOverlay() {
                     document.head.appendChild(link);
                 }
                 link.href = iconUrl;
-                document.title = "Dotti Sender FULL";
+                document.title = "LetzFlow Sender";
                 if (window.innerWidth > mW + 100 || window.innerHeight > mH + 100) return;
                 // Esconder sidebar e botao toggle na mini window
                 const sidebar = document.getElementById("dotti-sender-full-panel");
@@ -839,7 +783,7 @@ async function injectStatusOverlay() {
                 document.documentElement.classList.remove("dotti-sidebar-open");
                 const o = document.createElement("div");
                 o.id = "dotti-status-overlay";
-                o.innerHTML = `<style>#dotti-status-overlay{position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;margin:0!important;padding:20px!important;box-sizing:border-box!important;background:linear-gradient(135deg,#1a1a2e,#16213e)!important;z-index:2147483647!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;font-family:'Segoe UI',Arial,sans-serif!important;color:#fff!important;pointer-events:none!important;transform:none!important;contain:none!important}#dotti-status-overlay .logo{font-size:48px!important;margin-bottom:15px!important}#dotti-status-overlay .title{font-size:22px!important;font-weight:700!important;margin-bottom:8px!important;background:linear-gradient(90deg,#00d4ff,#7b2cbf)!important;-webkit-background-clip:text!important;-webkit-text-fill-color:transparent!important}#dotti-status-overlay .status{font-size:14px!important;color:#a0a0a0!important;margin-bottom:20px!important}#dotti-status-overlay .pbar{width:80%!important;height:6px!important;background:#2a2a4a!important;border-radius:3px!important;overflow:hidden!important;margin-bottom:15px!important}#dotti-status-overlay .pfill{height:100%!important;background:linear-gradient(90deg,#00d4ff,#7b2cbf)!important;border-radius:3px!important;transition:width .3s!important;width:0}#dotti-status-overlay .count{font-size:36px!important;font-weight:700!important;color:#00d4ff!important}#dotti-status-overlay .label{font-size:12px!important;color:#666!important;margin-top:5px!important}</style><div class="logo">⚡</div><div class="title">DOTTI SENDER FULL</div><div class="status" id="dso-status">Preparando...</div><div class="pbar"><div class="pfill" id="dso-progress"></div></div><div class="count" id="dso-count">0/0</div><div class="label">prompts enviados</div>`;
+                o.innerHTML = `<style>#dotti-status-overlay{position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;margin:0!important;padding:20px!important;box-sizing:border-box!important;background:linear-gradient(135deg,#1a1a2e,#16213e)!important;z-index:2147483647!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;font-family:'Segoe UI',Arial,sans-serif!important;color:#fff!important;pointer-events:none!important;transform:none!important;contain:none!important}#dotti-status-overlay .logo{font-size:48px!important;margin-bottom:15px!important}#dotti-status-overlay .title{font-size:22px!important;font-weight:700!important;margin-bottom:8px!important;background:linear-gradient(90deg,#00d4ff,#7b2cbf)!important;-webkit-background-clip:text!important;-webkit-text-fill-color:transparent!important}#dotti-status-overlay .status{font-size:14px!important;color:#a0a0a0!important;margin-bottom:20px!important}#dotti-status-overlay .pbar{width:80%!important;height:6px!important;background:#2a2a4a!important;border-radius:3px!important;overflow:hidden!important;margin-bottom:15px!important}#dotti-status-overlay .pfill{height:100%!important;background:linear-gradient(90deg,#00d4ff,#7b2cbf)!important;border-radius:3px!important;transition:width .3s!important;width:0}#dotti-status-overlay .count{font-size:36px!important;font-weight:700!important;color:#00d4ff!important}#dotti-status-overlay .label{font-size:12px!important;color:#666!important;margin-top:5px!important}</style><div class="logo">⚡</div><div class="title">LETZFLOW SENDER</div><div class="status" id="dso-status">Preparando...</div><div class="pbar"><div class="pfill" id="dso-progress"></div></div><div class="count" id="dso-count">0/0</div><div class="label">prompts enviados</div>`;
                 document.documentElement.appendChild(o);
             },
             args: [chrome.runtime.getURL("icons/icon128.png"), WINDOW_SIZES.mini.width, WINDOW_SIZES.mini.height]
@@ -879,9 +823,40 @@ async function removeStatusOverlay() {
                 if (sidebar) sidebar.style.display = "";
                 const toggleBtn = document.getElementById("dotti-sender-toggle-btn");
                 if (toggleBtn) toggleBtn.style.display = "";
+                // Restaurar classe que controla layout do body
+                document.documentElement.classList.add("dotti-sidebar-open");
             }
         });
-    } catch (e) {}
+    } catch (e) {
+        console.log("[Dotti] removeStatusOverlay error:", e.message);
+    }
+}
+
+// Garantir que pagina esta restaurada apos remover overlay
+async function restorePageAfterOverlay() {
+    if (!targetTabId) return;
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId: targetTabId },
+            world: "MAIN",
+            func: () => {
+                // Verificar se overlay ainda existe e remover forçadamente
+                const overlay = document.getElementById("dotti-status-overlay");
+                if (overlay) {
+                    console.log("[Dotti DOM] Overlay ainda presente - removendo forcadamente");
+                    overlay.remove();
+                }
+                // Restaurar visibilidade dos elementos
+                const sidebar = document.getElementById("dotti-sender-full-panel");
+                if (sidebar) sidebar.style.display = "";
+                const toggleBtn = document.getElementById("dotti-sender-toggle-btn");
+                if (toggleBtn) toggleBtn.style.display = "";
+                document.documentElement.classList.add("dotti-sidebar-open");
+            }
+        });
+    } catch (e) {
+        console.log("[Dotti] restorePageAfterOverlay error:", e.message);
+    }
 }
 
 // ============================================
@@ -929,16 +904,6 @@ async function processNextPrompt() {
 
     const result = await executePromptInTab(prompt, queueMediaType);
     console.log("[Dotti] Prompt", prompt.number, "result:", JSON.stringify(result));
-
-    if (result.blocked) {
-        isProcessingQueue = false;
-        queuePaused = true;
-        setBadgeStatus("inactive");
-        await updateStatusOverlay("LICENCA INVALIDA", totalProcessed, totalInQueue);
-        notifyTab({ action: "LICENSE_ERROR", data: { message: "Configuracao do servidor nao disponivel" } });
-        await saveQueueState();
-        return;
-    }
 
     // v2.0.0: Se janela fechada, parar fila inteira
     if (!result.success && result.error === "window_closed") {
@@ -1041,11 +1006,6 @@ async function processNextPrompt() {
 }
 
 async function startQueue(prompts, settings, tabId, mediaType, bgMode) {
-    // Padrao v1.0.1: config do servidor + licenca ativa
-    const config = await _ensureConfig();
-    if (!config) return { success: false, error: "no_config", message: "Nao foi possivel obter configuracao do servidor. Verifique sua licenca." };
-    if (!sdk?.isLicenseActive()) return { success: false, error: "invalid_license", message: "Licenca invalida ou expirada" };
-
     if (!tabId && targetTabId) tabId = targetTabId;
     if (!tabId) return { success: false, error: "no_tab" };
 
@@ -1139,10 +1099,6 @@ async function pauseQueue() {
 }
 
 async function resumeQueue() {
-    // Padrao v1.0.1: config do servidor
-    const config = await _ensureConfig();
-    if (!config) return { success: false, error: "no_config" };
-
     queuePaused = false;
     isProcessingQueue = true;
     lastActivityTime = Date.now();
@@ -1363,7 +1319,7 @@ function isFlowMediaDownload(url, mime) {
 function findOldestPending() {
     const now = Date.now();
     for (const key of Object.keys(pendingUpscaleDownloads)) {
-        if (now - pendingUpscaleDownloads[key].timestamp > 300000) {
+        if (now - pendingUpscaleDownloads[key].timestamp > 600000) { // 10 min (era 5 min)
             delete pendingUpscaleDownloads[key];
         }
     }
@@ -1383,7 +1339,7 @@ function findOldestPending() {
 
 // Helper: construir filename customizado
 function buildCustomFilename(pending, downloadItem) {
-    const folder = pending.folder || "DottiVideos";
+    const folder = pending.folder || "LetzVideos";
     const promptNum = pending.promptNumber || 0;
     const resolution = pending.resolution || "1080p";
     const type = pending.type || "video";
@@ -1574,17 +1530,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         }
     } else if (alarm.name === "dottiNextPrompt") {
         processNextPrompt();
-    } else if (alarm.name === "dottiLicenseCheck") {
-        if (sdk) {
-            const savedKey = await sdk.getSavedLicense();
-            if (savedKey) {
-                const v = await sdk.validateLicense(savedKey);
-                if (!v) { _serverConfig = null; setBadgeStatus("inactive"); }
-                else await _fetchServerConfig();
-            }
-        }
-    } else if (alarm.name === "dottiConfigRefresh") {
-        await _fetchServerConfig();
     } else if (alarm.name === "dottiWatchdog") {
         // v2.1.0: Watchdog - detecta fila travada e retoma automaticamente
         if (isProcessingQueue && !queuePaused && promptQueue.length > 0) {
@@ -1608,10 +1553,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
 });
 
-chrome.alarms.create("dottiKeepAlive", { periodInMinutes: 0.3 }); // v2.1.0: 18s keep-alive
-chrome.alarms.create("dottiLicenseCheck", { periodInMinutes: 60 });
-chrome.alarms.create("dottiConfigRefresh", { periodInMinutes: 25 });
-chrome.alarms.create("dottiWatchdog", { periodInMinutes: 0.33 }); // v2.1.0: Watchdog a cada 20s
+chrome.alarms.create("dottiKeepAlive", { periodInMinutes: 0.3 }); // 18s keep-alive
+chrome.alarms.create("dottiWatchdog", { periodInMinutes: 0.33 }); // Watchdog a cada 20s
 
 // ============================================
 // MESSAGE HANDLER - v2.0.0 COM GET_FULL_STATE
@@ -1619,15 +1562,11 @@ chrome.alarms.create("dottiWatchdog", { periodInMinutes: 0.33 }); // v2.1.0: Wat
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
         try {
-            await _bootPromise; // v2.1.0: Garantir que estado foi carregado
-            if (!isInitialized) await initSDK();
+            await _bootPromise;
             switch (message.action) {
                 case "GET_STATUS":
                     sendResponse({
                         isInitialized: true,
-                        hasLicense: sdk?.isLicenseActive() || false,
-                        licenseInfo: sdk?.getLicenseInfo() || null,
-                        hasServerConfig: !!_serverConfig,
                         queueLength: promptQueue.length,
                         isProcessing: isProcessingQueue,
                         isPaused: queuePaused,
@@ -1636,7 +1575,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     });
                     break;
 
-                // v2.0.0: Estado completo para recuperacao do painel
                 case "GET_FULL_STATE":
                     sendResponse({
                         isProcessing: isProcessingQueue,
@@ -1650,58 +1588,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         isWindowMini: isWindowMini,
                         mediaType: queueMediaType
                     });
-                    break;
-
-                case "ACTIVATE_LICENSE":
-                    if (!message.licenseKey) { sendResponse({ success: false, error: "missing_key" }); break; }
-                    console.log("[Dotti] ACTIVATE_LICENSE key:", message.licenseKey, "deviceId:", sdk?.deviceId);
-                    const ar = await sdk.activateLicense(message.licenseKey);
-                    console.log("[Dotti] ACTIVATE_LICENSE resultado:", JSON.stringify(ar));
-                    if (ar.success) {
-                        // Verificar limite de dispositivos (servidor pode nao bloquear)
-                        const lic = ar.license || {};
-                        const devUsed = parseInt(lic.devices_used) || 0;
-                        const devMax = parseInt(lic.max_devices) || 2;
-                        console.log("[Dotti] Dispositivos:", devUsed + "/" + devMax);
-                        if (devUsed > devMax) {
-                            console.log("[Dotti] BLOQUEADO: limite de dispositivos excedido", devUsed + "/" + devMax);
-                            sendResponse({ success: false, error: "max_devices", message: "Limite de dispositivos atingido (" + devUsed + "/" + devMax + "). Desative um dispositivo no painel." });
-                            break;
-                        }
-                        await _fetchServerConfig();
-                    }
-                    sendResponse(ar);
-                    break;
-
-                case "DEACTIVATE_LICENSE":
-                    const dr = await sdk.deactivateLicense();
-                    _serverConfig = null; _sessionToken = null;
-                    sendResponse(dr);
-                    break;
-
-                case "VERIFY_SESSION_FOR_SENDING":
-                    const savedLicense = await sdk.getSavedLicense();
-                    if (savedLicense) {
-                        const validateResult = await sdk.validateLicense(savedLicense);
-                        const isValid = validateResult === true || validateResult?.valid === true;
-                        if (isValid) {
-                            // Verificar limite de dispositivos
-                            const li = sdk.getLicenseInfo();
-                            const dUsed = parseInt(li?.devicesUsed || li?.devices_used) || 0;
-                            const dMax = parseInt(li?.maxDevices || li?.max_devices) || 2;
-                            if (dUsed > dMax) {
-                                console.log("[Dotti] VERIFY blocked: devices", dUsed + "/" + dMax);
-                                sendResponse({ valid: false, error: 'max_devices', message: 'Limite de dispositivos excedido' });
-                                break;
-                            }
-                            const vConfig = await _ensureConfig();
-                            sendResponse({ valid: true, hasConfig: !!vConfig });
-                        } else {
-                            sendResponse({ valid: false, error: validateResult?.error || 'validation_failed' });
-                        }
-                    } else {
-                        sendResponse({ valid: false, error: 'no_license' });
-                    }
                     break;
 
                 case "OPEN_VEO_WINDOW":
@@ -1938,7 +1824,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     pendingUpscaleDownloads[regId] = {
                         promptNumber: message.promptNumber,
                         promptText: message.promptText || "",
-                        folder: message.folder || "DottiVideos",
+                        folder: message.folder || "LetzVideos",
                         resolution: message.resolution || "1080p",
                         type: message.downloadType || "video",
                         timestamp: Date.now()
@@ -2095,8 +1981,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                             batchSize: s.batchSize || 20,
                             batchInterval: s.batchInterval || 90,
                             promptDelay: s.promptDelay || 3,
-                            videoFolder: s.videoFolder || "DottiVideos",
-                            imageFolder: s.imageFolder || "DottiImagens",
+                            videoFolder: s.videoFolder || "LetzVideos",
+                            imageFolder: s.imageFolder || "LetzImagens",
                             videoResolution: s.videoResolution || "720",
                             imageResolution: s.imageResolution || "1024",
                             videoOutputCount: s.videoOutputCount || 1,
@@ -2181,15 +2067,7 @@ chrome.action.onClicked.addListener(async () => {
 chrome.runtime.onInstalled.addListener(async () => {
     await _bootPromise;
 
-    // Limpar dados de teste/invalidos do storage
-    const licData = await chrome.storage.local.get('dottiflow_license');
-    const savedKey = licData.dottiflow_license?.key;
-    if (savedKey && (savedKey.includes("TESTE") || savedKey === "test-device")) {
-        console.log("[Dotti] Removing invalid test license data");
-        await chrome.storage.local.remove(['dottiflow_license', 'dottiflow_session', 'dottiflow_last_heartbeat']);
-    }
-
-    // v2.0.0: Permitir downloads multiplos automaticos no labs.google
+    // Permitir downloads multiplos automaticos no labs.google
     // Evita que o Chrome pergunte "Este site quer baixar varios ficheiros"
     try {
         await chrome.contentSettings.automaticDownloads.set({
@@ -2205,12 +2083,9 @@ chrome.runtime.onInstalled.addListener(async () => {
 chrome.runtime.onStartup.addListener(async () => {
     await _bootPromise;
     if (!queuePaused && promptQueue.length > 0) {
-        const cfg = await _ensureConfig();
-        if (cfg) {
-            isProcessingQueue = true;
-            setBadgeStatus("processing");
-            setTimeout(processNextPrompt, 3000);
-        }
+        isProcessingQueue = true;
+        setBadgeStatus("processing");
+        setTimeout(processNextPrompt, 3000);
     }
 });
 
@@ -2218,16 +2093,9 @@ chrome.runtime.onStartup.addListener(async () => {
 // Resolve UMA vez e depois retorna instantaneamente
 // ============================================
 const _bootPromise = (async () => {
-    // Garantir device_id unico antes do SDK (evita colisao de hash entre navegadores)
-    const stored = await chrome.storage.local.get('dottiflow_device_id');
-    if (!stored.dottiflow_device_id) {
-        const uniqueId = 'ext_' + crypto.randomUUID().replace(/-/g, '').substring(0, 12);
-        await chrome.storage.local.set({ dottiflow_device_id: uniqueId });
-        console.log("[Dotti] Device ID gerado:", uniqueId);
-    }
-    await initSDK();
     await loadQueueState();
     await loadTrackedDownloads();
     await loadPendingDownloads();
-    console.log("[Dotti] Boot complete. Queue:", promptQueue.length, "Processing:", isProcessingQueue);
+    setBadgeStatus("active");
+    console.log("[LetzFlow] Boot complete. Queue:", promptQueue.length, "Processing:", isProcessingQueue);
 })();

@@ -1,19 +1,18 @@
 // ============================================
-// DOTTI SENDER FULL - PANEL v2.0.2
-// Copyright (c) DottiFlow - Todos os direitos reservados
+// LETZFLOW SENDER - PANEL v2.1.0
+// Uso pessoal - sem licenciamento
 // TABS: Video / Imagem com estado independente
 // ============================================
 
 let activeTab = "video";
-let licenseInfo = null, autoDownload = true, backgroundMode = true, currentTabId = null;
-let views = {};
+let autoDownload = true, backgroundMode = true, currentTabId = null;
 
 // v2.0.1 FIX: Set de URLs ja baixadas - previne download duplicado do mesmo arquivo
 const _downloadedVideoUrls = new Set();
 
 const tabState = {
-    video: { prompts: [], isRunning: false, timerInterval: null, countdownEndTime: null, statePollingTimer: null, detectedMedia: {}, resolution: "720", folder: "DottiVideos", outputCount: 1 },
-    image: { prompts: [], isRunning: false, timerInterval: null, countdownEndTime: null, statePollingTimer: null, detectedMedia: {}, resolution: "1024", folder: "DottiImagens", outputCount: 1 }
+    video: { prompts: [], isRunning: false, timerInterval: null, countdownEndTime: null, statePollingTimer: null, detectedMedia: {}, resolution: "720", folder: "LetzVideos", outputCount: 1 },
+    image: { prompts: [], isRunning: false, timerInterval: null, countdownEndTime: null, statePollingTimer: null, detectedMedia: {}, resolution: "1024", folder: "LetzImagens", outputCount: 1 }
 };
 
 const tabIds = {
@@ -42,7 +41,7 @@ const tabIds = {
 };
 
 function el(tab, key) { return document.getElementById(tabIds[tab][key]); }
-function getFolder(tab) { return tabState[tab].folder || (tab === "video" ? "DottiVideos" : "DottiImagens"); }
+function getFolder(tab) { return tabState[tab].folder || (tab === "video" ? "LetzVideos" : "LetzImagens"); }
 
 // v2.1.0: Atualizar log persistente quando media e detectada/baixada
 function updateLog(promptNumber, mediaType, mediaStatus) {
@@ -68,23 +67,14 @@ function buildLocalFilename(tab, prompt, resolution) {
 // ============================================
 // INIT
 // ============================================
-function initViews() {
-    views = {
-        loading: document.getElementById("loadingView"),
-        license: document.getElementById("licenseView"),
-        app: document.getElementById("appView")
-    };
-}
-
 async function init() {
     try {
-        initViews();
         setupMessageListener();
-        await checkLicense();
+        initApp();
     } catch (e) {
         console.error("[Panel] Init error:", e);
         document.body.innerHTML = '<div style="padding:20px;color:#fff;background:#111;font-family:sans-serif;">' +
-            '<h3 style="color:#FF571C;">Dotti Sender FULL v2.0.2</h3>' +
+            '<h3 style="color:#FF571C;">LetzFlow Sender v2.1.0</h3>' +
             '<p style="color:#888;">Erro ao inicializar. Recarregue a pagina.</p>' +
             '<p style="color:#666;font-size:12px;">' + (e.message || 'Erro desconhecido') + '</p></div>';
     }
@@ -138,7 +128,6 @@ function setupMessageListener() {
             case "PROMPT_RESULT": handlePromptResult(data); break;
             case "BATCH_PAUSE": handleBatchPause(data); break;
             case "QUEUE_COMPLETE": handleQueueComplete(); break;
-            case "LICENSE_ERROR": handleLicenseError(data); break;
             case "QUEUE_ERROR": handleQueueError(data); break;
             case "DOWNLOAD_INTERCEPTED": handleDownloadIntercepted(data); break;
         }
@@ -217,16 +206,6 @@ function handleQueueError(data) {
     el(tab, "cancelAllBtn").classList.remove("hidden");
 }
 
-function handleLicenseError(data) {
-    const tab = getRunningTab() || activeTab;
-    tabState[tab].isRunning = false;
-    stopStatePolling(tab);
-    updateBlockedOverlay();
-    updateStatus("error", (data.message || "Licenca invalida"));
-    el(tab, "stopBtn").classList.add("hidden");
-    el(tab, "emergencyStopBtn").classList.add("hidden");
-    el(tab, "startBtn").classList.remove("hidden");
-}
 
 // ============================================
 // TIMERS
@@ -578,7 +557,7 @@ async function downloadMedia(tab, idx) {
     }
     console.log("[Panel] downloadMedia INICIANDO prompt", p.number, "tab:", tab, "resolution:", st.resolution, "url:", p.mediaUrl.substring(0, 80));
     p._downloading = true;
-    _downloadedVideoUrls.add(p.mediaUrl); // Registrar URL como baixada
+    // Registrar URL so apos download confirmado (nao antes)
 
     const resolution = st.resolution;
 
@@ -588,7 +567,6 @@ async function downloadMedia(tab, idx) {
             try {
                 p.mediaStatus = "upscaling";
                 displayPrompts(tab);
-                // v2.0.1: REGISTER so para upscale (interceptor do browser)
                 try {
                     await chrome.runtime.sendMessage({
                         action: "REGISTER_UPSCALE_DOWNLOAD",
@@ -603,7 +581,9 @@ async function downloadMedia(tab, idx) {
                 }, "*");
                 setTimeout(() => {
                     if (p.mediaStatus === "upscaling") {
-                        p.mediaStatus = "downloaded";
+                        // Timeout: reverter para "generated" para permitir retry
+                        console.log("[Panel] Upscale timeout prompt", p.number, "- revertendo para generated");
+                        p.mediaStatus = "generated";
                         p._downloading = false;
                         displayPrompts(tab);
                         updateStatsDisplay(tab);
@@ -613,9 +593,7 @@ async function downloadMedia(tab, idx) {
             } catch (e) {}
         }
 
-        // Video 720p: download direto com URL do webRequest (storage.googleapis.com)
-        // v2.0.1 FIX: NAO usar REFRESH_VIDEO_URL - a URL do webRequest ja e a URL final do arquivo.
-        // REFRESH buscava URL por prompt text no DOM, que e fragil com zoom out.
+        // Video 720p: download direto com URL do webRequest
         let downloadUrl = p.mediaUrl;
         try {
             const r = await chrome.runtime.sendMessage({
@@ -626,13 +604,20 @@ async function downloadMedia(tab, idx) {
             if (r.success) {
                 p.mediaStatus = "downloaded";
                 p._downloading = false;
+                _downloadedVideoUrls.add(p.mediaUrl);
                 displayPrompts(tab);
                 updateStatsDisplay(tab);
                 updateLog(p.number, tab, "downloaded");
             } else {
+                console.log("[Panel] DOWNLOAD_VIDEO falhou prompt", p.number, "erro:", r.error);
                 p._downloading = false;
+                displayPrompts(tab);
+                updateStatsDisplay(tab);
             }
-        } catch (e) { p._downloading = false; }
+        } catch (e) {
+            console.log("[Panel] DOWNLOAD_VIDEO exception prompt", p.number, e.message);
+            p._downloading = false;
+        }
 
     } else {
         // Image 2K: upscale via Flow UI
@@ -640,7 +625,6 @@ async function downloadMedia(tab, idx) {
             try {
                 p.mediaStatus = "upscaling";
                 displayPrompts(tab);
-                // v2.0.1: REGISTER so para upscale (interceptor do browser)
                 try {
                     await chrome.runtime.sendMessage({
                         action: "REGISTER_UPSCALE_DOWNLOAD",
@@ -655,17 +639,19 @@ async function downloadMedia(tab, idx) {
                 }, "*");
                 setTimeout(() => {
                     if (p.mediaStatus === "upscaling") {
-                        p.mediaStatus = "downloaded";
+                        // Timeout: reverter para "generated" para permitir retry
+                        console.log("[Panel] Image upscale timeout prompt", p.number, "- revertendo para generated");
+                        p.mediaStatus = "generated";
                         p._downloading = false;
                         displayPrompts(tab);
                         updateStatsDisplay(tab);
                     }
-                }, 60000);
+                }, 120000); // 120s para imagem tambem (era 60s)
                 return;
             } catch (e) {}
         }
 
-        // Image 1K: direct download (SEM REGISTER - download direto ja tem filename)
+        // Image 1K: direct download
         try {
             const r = await chrome.runtime.sendMessage({
                 action: "DOWNLOAD_IMAGE",
@@ -675,100 +661,28 @@ async function downloadMedia(tab, idx) {
             if (r.success) {
                 p.mediaStatus = "downloaded";
                 p._downloading = false;
+                _downloadedVideoUrls.add(p.mediaUrl);
                 displayPrompts(tab);
                 updateStatsDisplay(tab);
                 updateLog(p.number, tab, "downloaded");
             } else {
+                console.log("[Panel] DOWNLOAD_IMAGE falhou prompt", p.number, "erro:", r.error);
                 p._downloading = false;
+                displayPrompts(tab);
+                updateStatsDisplay(tab);
             }
-        } catch (e) { p._downloading = false; }
-    }
-}
-
-// ============================================
-// LICENSE
-// ============================================
-async function checkLicense() {
-    showView("loading");
-    try {
-        const r = await chrome.runtime.sendMessage({ action: "GET_STATUS" });
-        if (r && r.hasLicense && r.licenseInfo) {
-            licenseInfo = r.licenseInfo;
-            showView("app");
-            initApp();
-        } else {
-            showView("license");
-            initLicenseForm();
+        } catch (e) {
+            console.log("[Panel] DOWNLOAD_IMAGE exception prompt", p.number, e.message);
+            p._downloading = false;
         }
-    } catch (e) {
-        showView("license");
-        initLicenseForm();
     }
 }
 
-function showView(name) {
-    Object.values(views).forEach(v => v.classList.add("hidden"));
-    views[name].classList.remove("hidden");
-}
-
-function initLicenseForm() {
-    const input = document.getElementById("licenseInput");
-    const btn = document.getElementById("activateBtn");
-    input.addEventListener("input", (e) => {
-        let val = e.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-        let formatted = "";
-        for (let i = 0; i < val.length && i < 20; i++) {
-            if (i > 0 && i % 5 === 0) formatted += "-";
-            formatted += val[i];
-        }
-        e.target.value = formatted;
-    });
-    input.addEventListener("keypress", (e) => { if (e.key === "Enter") activateLicense(); });
-    btn.addEventListener("click", activateLicense);
-    input.focus();
-}
-
-async function activateLicense() {
-    const input = document.getElementById("licenseInput");
-    const btn = document.getElementById("activateBtn");
-    const key = input.value.trim();
-    if (!/^[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)) {
-        showLicenseError("Formato invalido");
-        return;
-    }
-    btn.disabled = true;
-    btn.innerHTML = "Ativando...";
-    document.getElementById("licenseError").classList.add("hidden");
-    try {
-        const r = await chrome.runtime.sendMessage({ action: "ACTIVATE_LICENSE", licenseKey: key });
-        if (r.success) {
-            licenseInfo = r.license;
-            showView("app");
-            initApp();
-        } else {
-            showLicenseError(r.message || r.error || "Erro");
-            btn.disabled = false;
-            btn.textContent = "Ativar Licenca";
-        }
-    } catch (e) {
-        showLicenseError("Erro de conexao");
-        btn.disabled = false;
-        btn.textContent = "Ativar Licenca";
-    }
-}
-
-function showLicenseError(msg) {
-    const e = document.getElementById("licenseError");
-    e.textContent = msg;
-    e.classList.remove("hidden");
-}
 
 // ============================================
 // APP INIT
 // ============================================
 async function initApp() {
-    updateLicenseDisplay();
-
     const tabInfo = await chrome.runtime.sendMessage({ action: "GET_ACTIVE_TAB" });
     currentTabId = tabInfo.tabId;
 
@@ -789,12 +703,12 @@ async function initApp() {
             document.getElementById("promptDelay").value = s.promptDelay;
             document.getElementById("autoDownload").checked = s.autoDownload;
             document.getElementById("backgroundMode").checked = s.backgroundMode !== false;
-            el("video", "folder").value = s.videoFolder || "DottiVideos";
-            el("image", "folder").value = s.imageFolder || "DottiImagens";
+            el("video", "folder").value = s.videoFolder || "LetzVideos";
+            el("image", "folder").value = s.imageFolder || "LetzImagens";
             autoDownload = s.autoDownload;
             backgroundMode = s.backgroundMode !== false;
-            tabState.video.folder = s.videoFolder || "DottiVideos";
-            tabState.image.folder = s.imageFolder || "DottiImagens";
+            tabState.video.folder = s.videoFolder || "LetzVideos";
+            tabState.image.folder = s.imageFolder || "LetzImagens";
         }
     });
 
@@ -812,7 +726,7 @@ async function initApp() {
         el(tab, "resendBtn").addEventListener("click", () => resendFailed(tab));
         el(tab, "copyFailedBtn").addEventListener("click", () => copyFailedNumbers(tab));
         el(tab, "folder").addEventListener("change", (e) => {
-            tabState[tab].folder = e.target.value.trim() || (tab === "video" ? "DottiVideos" : "DottiImagens");
+            tabState[tab].folder = e.target.value.trim() || (tab === "video" ? "LetzVideos" : "LetzImagens");
             saveSettings();
         });
     }
@@ -829,8 +743,6 @@ async function initApp() {
     ["batchSize", "batchInterval", "promptDelay"].forEach(id => {
         document.getElementById(id).addEventListener("change", saveSettings);
     });
-    document.getElementById("deactivateBtn").addEventListener("click", deactivateLicense);
-
     await recoverBackgroundState();
 }
 
@@ -870,7 +782,6 @@ async function recoverBackgroundState() {
                 el(tab, "progressContainer").classList.remove("hidden");
                 el(tab, "statusCard").classList.remove("hidden");
                 document.getElementById("sharedSettingsCard").classList.add("hidden");
-                document.getElementById("licenseInfoCard").classList.add("hidden");
 
                 displayPrompts(tab);
                 updateStatsDisplay(tab);
@@ -1003,21 +914,6 @@ function saveSettings() {
     });
 }
 
-function updateLicenseDisplay() {
-    if (licenseInfo) {
-        document.getElementById("licenseKeyDisplay").textContent = licenseInfo.key || "-";
-        const devUsed = licenseInfo.devicesUsed || licenseInfo.devices_used || 0;
-        const devMax = licenseInfo.maxDevices || licenseInfo.max_devices || 2;
-        document.getElementById("devicesDisplay").textContent = devUsed + "/" + devMax;
-        document.getElementById("limitDisplay").textContent = licenseInfo.features?.batch_limit || 1000;
-    }
-}
-
-async function deactivateLicense() {
-    if (!confirm("Desativar licenca?")) return;
-    const r = await chrome.runtime.sendMessage({ action: "DEACTIVATE_LICENSE" });
-    if (r.success) { licenseInfo = null; showView("license"); initLicenseForm(); }
-}
 
 // ============================================
 // UI UPDATES
@@ -1078,12 +974,6 @@ function processPrompts(tab) {
 
     st.prompts.sort((a, b) => a.number - b.number);
     if (st.prompts.length === 0) { updateStatus("error", "Nenhum prompt encontrado!"); return; }
-
-    const limit = licenseInfo?.features?.batch_limit || 1000;
-    if (st.prompts.length > limit) {
-        updateStatus("error", "Limite excedido: " + st.prompts.length + " (max: " + limit + ")");
-        return;
-    }
 
     saveSettings();
     displayPrompts(tab);
@@ -1198,23 +1088,6 @@ async function startSending(tab) {
         return;
     }
 
-    // Verificar sessao com o servidor (igual PRO)
-    updateStatus("warning", "Verificando sessao...");
-
-    try {
-        const sessionResult = await chrome.runtime.sendMessage({ action: "VERIFY_SESSION_FOR_SENDING" });
-        if (!sessionResult.valid) {
-            if (sessionResult.error === "no_license") {
-                updateStatus("error", "Licenca nao encontrada!");
-            } else if (sessionResult.error === "network_error") {
-                updateStatus("error", "Erro de conexao. Verifique sua internet.");
-            } else {
-                updateStatus("error", "Sessao expirada. Reabra a extensao.");
-            }
-            return;
-        }
-    } catch (e) { updateStatus("error", "Erro de conexao. Recarregue a pagina."); return; }
-
     try {
         const tabInfo = await chrome.runtime.sendMessage({ action: "GET_ACTIVE_TAB" });
         currentTabId = tabInfo?.tabId;
@@ -1258,7 +1131,6 @@ async function startSending(tab) {
         frDiv.innerHTML = "Pasta de downloads: <span>" + getFolder(tab) + "</span>";
         frDiv.classList.remove("hidden");
     }
-    document.getElementById("licenseInfoCard").classList.add("hidden");
 
     const settings = {
         batchSize: parseInt(document.getElementById("batchSize").value),
@@ -1332,7 +1204,6 @@ async function stopSending(tab) {
     el(tab, "startBtn").onclick = () => continueSending(tab);
     el(tab, "cancelAllBtn").classList.remove("hidden");
     el(tab, "timer").classList.add("hidden");
-    document.getElementById("licenseInfoCard").classList.remove("hidden");
 }
 
 async function emergencyStop(tab) {
@@ -1353,7 +1224,6 @@ async function emergencyStop(tab) {
     el(tab, "stopBtn").classList.add("hidden");
     el(tab, "emergencyStopBtn").classList.add("hidden");
     el(tab, "timer").classList.add("hidden");
-    document.getElementById("licenseInfoCard").classList.remove("hidden");
 
     if (st.prompts.length > 0) {
         const failedPrompts = st.prompts.filter(p => p.status === "error" || p.status === "waiting" || p.status === "sending");
@@ -1389,7 +1259,6 @@ function finishSending(tab) {
     el(tab, "stopBtn").classList.add("hidden");
     el(tab, "emergencyStopBtn").classList.add("hidden");
     el(tab, "timer").classList.add("hidden");
-    document.getElementById("licenseInfoCard").classList.remove("hidden");
 
     updateStatsDisplay(tab);
 
@@ -1466,7 +1335,6 @@ function resetAll(tab) {
     el(tab, "progressFill").style.width = "0%";
     el(tab, "progressText").textContent = "0%";
     document.getElementById("sharedSettingsCard").classList.remove("hidden");
-    document.getElementById("licenseInfoCard").classList.remove("hidden");
 
     updateStatsDisplay(tab);
     updateStatus("success", "Pronto! Cole seus prompts para um novo envio");
@@ -1514,7 +1382,6 @@ async function cancelAll(tab) {
     el(tab, "timer").classList.add("hidden");
     el(tab, "promptsInput").value = "";
     document.getElementById("sharedSettingsCard").classList.remove("hidden");
-    document.getElementById("licenseInfoCard").classList.remove("hidden");
 
     if (tab === "image") {
         window.parent.postMessage({ type: "SWITCH_TO_VIDEO_MODE" }, "*");

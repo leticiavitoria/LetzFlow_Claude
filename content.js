@@ -1,6 +1,6 @@
 // ============================================
-// DOTTI SENDER FULL - CONTENT SCRIPT v2.0.0
-// Copyright (c) DottiFlow - Todos os direitos reservados
+// LETZFLOW SENDER - CONTENT SCRIPT v2.1.0
+// Uso pessoal - sem licenciamento
 // EXECUTOR DE DOM (recebe comandos do background)
 // ============================================
 
@@ -909,8 +909,7 @@
         header.innerHTML = `
             <div class="dotti-panel-title">
                 <span class="dotti-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13 2L4 14H11L10 22L19 10H12L13 2Z" fill="#FFD700" stroke="#FFD700" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                <span>Dotti Sender</span>
-                <span class="dotti-badge">FULL</span>
+                <span>LetzFlow</span>
             </div>
             <div class="dotti-panel-actions">
                 <button class="dotti-btn-minimize" title="Minimizar">&minus;</button>
@@ -2469,19 +2468,17 @@
                 sendResponse({ success: true });
                 break;
 
-            case "LICENSE_ERROR":
-                notifyPanel({ type: "LICENSE_ERROR", data: message.data });
-                sendResponse({ success: true });
-                break;
+            // LICENSE_ERROR removido (v2.1.0)
 
             // v2.1.0: Preparar para proximo prompt - limpar galeria/elementos
             case "PREPARE_FOR_NEXT_PROMPT":
                 (async () => {
                     try {
                         await clearElements();
-                        // Limpar imagens detectadas para evitar cross-matching
-                        window.DOTTI_DETECTED_IMAGES = {};
-                        console.log("[Dotti DOM] Galeria limpa para proximo prompt");
+                        // NAO limpar DOTTI_DETECTED_IMAGES aqui - a dedup por src URL
+                        // em scanForImages() ja previne re-deteccao, e limpar antes
+                        // pode perder imagens do prompt anterior que ainda nao foram baixadas
+                        console.log("[Dotti DOM] Elementos limpos para proximo prompt");
                         sendResponse({ success: true });
                     } catch (e) {
                         console.error("[Dotti DOM] Erro ao limpar galeria:", e);
@@ -2912,7 +2909,7 @@
             toggleBtn = document.createElement("div");
             toggleBtn.id = TOGGLE_BTN_ID;
             toggleBtn.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13 2L4 14H11L10 22L19 10H12L13 2Z" fill="#FFD700" stroke="#FFD700" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-            toggleBtn.title = "Dotti Sender FULL";
+            toggleBtn.title = "LetzFlow Sender";
             toggleBtn.addEventListener("click", togglePanel);
             document.body.appendChild(toggleBtn);
         }
@@ -2946,7 +2943,7 @@
             }
         }, 3000);
 
-        console.log("[Dotti Sender FULL] v2.0.2 ready");
+        console.log("[LetzFlow Sender] v2.1.0 ready");
     }
 
     if (document.readyState === "loading") {
